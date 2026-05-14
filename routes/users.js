@@ -15,12 +15,17 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
 router.post('/', requireAuth, requireAdmin, async (req, res) => {
   const { nombre, usuario, password, role } = req.body;
   if (!nombre || !usuario || !password) return res.status(400).json({ error: 'Campos requeridos: nombre, usuario, password' });
-  const hash = await bcrypt.hash(password, 10);
-  const [result] = await pool.query(
-    'INSERT INTO users (nombre, usuario, password, role) VALUES (?, ?, ?, ?)',
-    [nombre, usuario, hash, role || 'vendedor']
-  );
-  res.status(201).json({ id: result.insertId, nombre, usuario, role: role || 'vendedor' });
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const [result] = await pool.query(
+      'INSERT INTO users (nombre, usuario, password, role) VALUES (?, ?, ?, ?)',
+      [nombre, usuario, hash, role || 'vendedor']
+    );
+    res.status(201).json({ id: result.insertId, nombre, usuario, role: role || 'vendedor' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'El usuario ya existe' });
+    throw err;
+  }
 });
 
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
