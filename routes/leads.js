@@ -29,8 +29,9 @@ router.get('/', requireAuth, async (req, res) => {
   const { user } = req;
   const { provincia, ciudad, parroquia, institucion } = req.query;
 
-  // Provincia + ciudad + parroquia son obligatorios para cargar leads
-  if (!provincia || !ciudad || !parroquia) {
+  // Para admin: provincia + ciudad + parroquia son obligatorios
+  // Para vendedor: carga sus leads directamente sin filtros geográficos
+  if (user.role === 'admin' && (!provincia || !ciudad || !parroquia)) {
     return res.json([]);
   }
 
