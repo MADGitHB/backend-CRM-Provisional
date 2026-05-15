@@ -106,7 +106,7 @@ router.get('/:id/eventos', requireAuth, async (req, res) => {
       const geo = await buildGerenteWhere(user.id);
       if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
       const [check] = await pool.query(
-        `SELECT id FROM leads WHERE id = ? AND ${geo.where}`,
+        `SELECT l.id FROM leads l WHERE l.id = ? AND ${geo.where}`,
         [req.params.id, ...geo.params]
       );
       if (!check[0]) return res.status(403).json({ error: 'Sin permiso' });
@@ -159,7 +159,7 @@ router.patch('/:id/asignar', requireAuth, requireAdminOrGerente, async (req, res
       const geo = await buildGerenteWhere(user.id);
       if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
       const [check] = await pool.query(
-        `SELECT id FROM leads WHERE id = ? AND ${geo.where}`,
+        `SELECT l.id FROM leads l WHERE l.id = ? AND ${geo.where}`,
         [req.params.id, ...geo.params]
       );
       if (!check[0]) return res.status(403).json({ error: 'Este lead no pertenece a tus territorios' });
@@ -193,7 +193,7 @@ router.patch('/asignar-masivo', requireAuth, requireAdminOrGerente, async (req, 
       if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
       const placeholders = lead_ids.map(() => '?').join(',');
       const [check] = await pool.query(
-        `SELECT id FROM leads WHERE id IN (${placeholders}) AND ${geo.where}`,
+        `SELECT l.id FROM leads l WHERE l.id IN (${placeholders}) AND ${geo.where}`,
         [...lead_ids, ...geo.params]
       );
       if (check.length !== lead_ids.length)
