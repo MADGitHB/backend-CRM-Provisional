@@ -170,7 +170,7 @@ router.patch('/:id/asignar', requireAuth, requireAdminOrGerente, async (req, res
       const [u] = await pool.query('SELECT nombre FROM users WHERE id = ?', [vendedor_id]);
       nombreVendedor = u[0]?.nombre ?? 'Desconocido';
     }
-    await pool.query('UPDATE leads SET asignado_a = ?, estado = "asignado" WHERE id = ?', [vendedor_id, req.params.id]);
+    await pool.query('UPDATE leads SET asignado_a = ?, estado = "asignado", updated_at = NOW() WHERE id = ?', [vendedor_id, req.params.id]);
     await registrarEvento(req.params.id, user, 'asignacion', `Asignado a ${nombreVendedor}`);
     res.json({ ok: true });
   } catch (err) {
