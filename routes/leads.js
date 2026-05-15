@@ -35,13 +35,16 @@ router.get('/', requireAuth, async (req, res) => {
     return res.json([]);
   }
 
-  const conditions = ['l.provincia = ?', 'l.ciudad = ?', 'l.parroquia = ?'];
-  const params = [provincia, ciudad, parroquia];
+  const conditions = [];
+  const params = [];
 
+  if (provincia) { conditions.push('l.provincia = ?'); params.push(provincia); }
+  if (ciudad)    { conditions.push('l.ciudad = ?');    params.push(ciudad); }
+  if (parroquia) { conditions.push('l.parroquia = ?'); params.push(parroquia); }
   if (institucion) { conditions.push('l.institucion = ?'); params.push(institucion); }
   if (user.role !== 'admin') { conditions.push('l.asignado_a = ?'); params.push(user.id); }
 
-  const where = 'WHERE ' + conditions.join(' AND ');
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const [rows] = await pool.query(
     `SELECT l.*, u.nombre as vendedor_nombre
      FROM leads l LEFT JOIN users u ON l.asignado_a = u.id
