@@ -1,13 +1,21 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireAdminOrGerente } from '../middleware/auth.js';
 
 const router = Router();
 
 router.get('/', requireAuth, requireAdmin, async (req, res) => {
   const [rows] = await pool.query(
     'SELECT id, nombre, usuario, email, role, ultimo_acceso, created_at FROM users ORDER BY nombre'
+  );
+  res.json(rows);
+});
+
+// Gerentes pueden obtener la lista de vendedores para asignar leads
+router.get('/vendedores', requireAuth, requireAdminOrGerente, async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT id, nombre FROM users WHERE role = 'vendedor' ORDER BY nombre"
   );
   res.json(rows);
 });
