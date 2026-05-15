@@ -6,6 +6,7 @@ const router = Router();
 
 // GET /stats — dashboard de métricas para admin
 router.get('/', requireAuth, requireAdmin, async (req, res) => {
+  try {
   const [
     [totales],
     [porEstado],
@@ -91,6 +92,10 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
     recientes,
     actividad,
   });
+  } catch (err) {
+    console.error('Stats error:', err.message);
+    res.status(500).json({ error: 'Error al cargar estadísticas. Verifica que la migración 001_gerentes.sql fue ejecutada.' });
+  }
 });
 
 export default router;
