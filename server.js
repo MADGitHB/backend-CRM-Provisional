@@ -24,4 +24,14 @@ app.use('/api/users', usersRoutes);
 app.use('/api/territorios', territoriosRoutes);
 app.use('/api/stats', statsRoutes);
 
+// Captura errores async no manejados — evita que el proceso caiga
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err.message);
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
 app.listen(PORT, () => console.log(`CRM API corriendo en http://localhost:${PORT}`));
