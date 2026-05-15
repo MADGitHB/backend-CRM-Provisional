@@ -15,3 +15,9 @@ export function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
   next();
 }
+
+export function requireAdminOrGerente(req, res, next) {
+  if (!['admin', 'gerente'].includes(req.user?.role))
+    return res.status(403).json({ error: 'Acceso no permitido' });
+  next();
+}

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import pool from '../db.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireAdminOrGerente } from '../middleware/auth.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -12,6 +12,20 @@ async function registrarEvento(lead_id, user, tipo, detalle) {
     'INSERT INTO lead_eventos (lead_id, user_id, user_nombre, tipo, detalle) VALUES (?, ?, ?, ?, ?)',
     [lead_id, user?.id ?? null, user?.nombre ?? 'Sistema', tipo, detalle]
   );
+}
+
+// Construye condiciones WHERE para los territorios de un gerente
+async function buildGerenteWhere(gerente_id) {
+  const [territorios] = await pool.query(
+    'SELECT tipo, valor FROM gerente_territorios WHERE gerente_id = ?',
+    [gerente_id]
+  );
+  if (!territorios.length) return null;
+
+  const colMap = { provincia: 'l.provincia', canton: 'l.ciudad', parroquia: 'l.parroquia', institucion: 'l.institucion' };
+  const conditions = territorios.map(t => `${colMap[t.tipo]} = ?`);
+  const params = territorios.map(t => t.valor);
+  return { where: `(${conditions.join(' OR ')})`, params };
 }
 
 // ── GET /leads/ubicaciones ────────────────────────────────────────────────────
@@ -29,20 +43,37 @@ router.get('/', requireAuth, async (req, res) => {
   const { user } = req;
   const { provincia, ciudad, parroquia, institucion } = req.query;
 
-  // Para admin: provincia + ciudad + parroquia son obligatorios
-  // Para vendedor: carga sus leads directamente sin filtros geográficos
-  if (user.role === 'admin' && (!provincia || !ciudad || !parroquia)) {
-    return res.json([]);
+  if (user.role === 'vendedor') {
+    const [rows] = await pool.query(
+      `SELECT l.*, u.nombre as vendedor_nombre
+       FROM leads l LEFT JOIN users u ON l.asignado_a = u.id
+       WHERE l.asignado_a = ? ORDER BY l.updated_at DESC`,
+      [user.id]
+    );
+    return res.json(rows);
   }
+
+  if (user.role === 'gerente') {
+    const geo = await buildGerenteWhere(user.id);
+    if (!geo) return res.json([]);
+    const [rows] = await pool.query(
+      `SELECT l.*, u.nombre as vendedor_nombre
+       FROM leads l LEFT JOIN users u ON l.asignado_a = u.id
+       WHERE ${geo.where} ORDER BY l.updated_at DESC`,
+      geo.params
+    );
+    return res.json(rows);
+  }
+
+  // admin: provincia + ciudad + parroquia obligatorios
+  if (!provincia || !ciudad || !parroquia) return res.json([]);
 
   const conditions = [];
   const params = [];
-
-  if (provincia) { conditions.push('l.provincia = ?'); params.push(provincia); }
-  if (ciudad)    { conditions.push('l.ciudad = ?');    params.push(ciudad); }
-  if (parroquia) { conditions.push('l.parroquia = ?'); params.push(parroquia); }
+  if (provincia)   { conditions.push('l.provincia = ?'); params.push(provincia); }
+  if (ciudad)      { conditions.push('l.ciudad = ?');    params.push(ciudad); }
+  if (parroquia)   { conditions.push('l.parroquia = ?'); params.push(parroquia); }
   if (institucion) { conditions.push('l.institucion = ?'); params.push(institucion); }
-  if (user.role !== 'admin') { conditions.push('l.asignado_a = ?'); params.push(user.id); }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const [rows] = await pool.query(
@@ -58,8 +89,20 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/:id/eventos', requireAuth, async (req, res) => {
   const [lead] = await pool.query('SELECT * FROM leads WHERE id = ?', [req.params.id]);
   if (!lead[0]) return res.status(404).json({ error: 'Lead no encontrado' });
-  if (req.user.role !== 'admin' && lead[0].asignado_a !== req.user.id)
+
+  const { user } = req;
+  if (user.role === 'vendedor' && lead[0].asignado_a !== user.id)
     return res.status(403).json({ error: 'Sin permiso' });
+
+  if (user.role === 'gerente') {
+    const geo = await buildGerenteWhere(user.id);
+    if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
+    const [check] = await pool.query(
+      `SELECT id FROM leads WHERE id = ? AND ${geo.where}`,
+      [req.params.id, ...geo.params]
+    );
+    if (!check[0]) return res.status(403).json({ error: 'Sin permiso' });
+  }
 
   const [rows] = await pool.query(
     'SELECT * FROM lead_eventos WHERE lead_id = ? ORDER BY created_at DESC',
@@ -77,28 +120,85 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM leads WHERE id = ?', [req.params.id]);
   const lead = rows[0];
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
-  if (req.user.role !== 'admin' && lead.asignado_a !== req.user.id)
+
+  const { user } = req;
+  if (user.role === 'vendedor' && lead.asignado_a !== user.id)
     return res.status(403).json({ error: 'Sin permiso' });
 
   const LABEL = { asignado: 'Asignado', contactado: 'Contactado', negociacion: 'Negociación', ganado: 'Ganado', perdido: 'Perdido' };
   await pool.query('UPDATE leads SET estado = ? WHERE id = ?', [estado, req.params.id]);
-  await registrarEvento(req.params.id, req.user, 'estado',
+  await registrarEvento(req.params.id, user, 'estado',
     `${LABEL[lead.estado] ?? lead.estado} → ${LABEL[estado]}`);
   res.json({ ok: true });
 });
 
-// ── PATCH /leads/:id/asignar ──────────────────────────────────────────────────
-router.patch('/:id/asignar', requireAuth, requireAdmin, async (req, res) => {
+// ── PATCH /leads/:id/asignar — admin o gerente asigna un lead a vendedor ─────
+router.patch('/:id/asignar', requireAuth, requireAdminOrGerente, async (req, res) => {
   const { vendedor_id } = req.body;
+  const { user } = req;
+
+  // Gerente solo puede asignar leads de sus territorios
+  if (user.role === 'gerente') {
+    const geo = await buildGerenteWhere(user.id);
+    if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
+    const [check] = await pool.query(
+      `SELECT id FROM leads WHERE id = ? AND ${geo.where}`,
+      [req.params.id, ...geo.params]
+    );
+    if (!check[0]) return res.status(403).json({ error: 'Este lead no pertenece a tus territorios' });
+  }
+
   let nombreVendedor = 'Sin asignar';
   if (vendedor_id) {
     const [u] = await pool.query('SELECT nombre FROM users WHERE id = ?', [vendedor_id]);
     nombreVendedor = u[0]?.nombre ?? 'Desconocido';
   }
   await pool.query('UPDATE leads SET asignado_a = ?, estado = "asignado" WHERE id = ?', [vendedor_id, req.params.id]);
-  await registrarEvento(req.params.id, req.user, 'asignacion',
-    `Asignado a ${nombreVendedor}`);
+  await registrarEvento(req.params.id, user, 'asignacion', `Asignado a ${nombreVendedor}`);
   res.json({ ok: true });
+});
+
+// ── PATCH /leads/asignar-masivo — asignación en bloque ───────────────────────
+router.patch('/asignar-masivo', requireAuth, requireAdminOrGerente, async (req, res) => {
+  const { lead_ids, vendedor_id } = req.body;
+  if (!Array.isArray(lead_ids) || !lead_ids.length)
+    return res.status(400).json({ error: 'lead_ids requerido' });
+
+  const { user } = req;
+
+  // Gerente: verificar que todos los leads son de sus territorios
+  if (user.role === 'gerente') {
+    const geo = await buildGerenteWhere(user.id);
+    if (!geo) return res.status(403).json({ error: 'Sin territorios asignados' });
+    const placeholders = lead_ids.map(() => '?').join(',');
+    const [check] = await pool.query(
+      `SELECT id FROM leads WHERE id IN (${placeholders}) AND ${geo.where}`,
+      [...lead_ids, ...geo.params]
+    );
+    if (check.length !== lead_ids.length)
+      return res.status(403).json({ error: 'Algunos leads no pertenecen a tus territorios' });
+  }
+
+  let nombreVendedor = 'Sin asignar';
+  if (vendedor_id) {
+    const [u] = await pool.query('SELECT nombre FROM users WHERE id = ?', [vendedor_id]);
+    nombreVendedor = u[0]?.nombre ?? 'Desconocido';
+  }
+
+  const placeholders = lead_ids.map(() => '?').join(',');
+  await pool.query(
+    `UPDATE leads SET asignado_a = ?, estado = "asignado" WHERE id IN (${placeholders})`,
+    [vendedor_id, ...lead_ids]
+  );
+
+  const eventRows = lead_ids.map(id => [id, user.id, user.nombre, 'asignacion', `Asignado a ${nombreVendedor}`]);
+  const evPh = eventRows.map(() => '(?,?,?,?,?)').join(',');
+  await pool.query(
+    `INSERT INTO lead_eventos (lead_id, user_id, user_nombre, tipo, detalle) VALUES ${evPh}`,
+    eventRows.flat()
+  );
+
+  res.json({ ok: true, updated: lead_ids.length });
 });
 
 // ── POST /leads/:id/nota ──────────────────────────────────────────────────────
@@ -109,7 +209,7 @@ router.post('/:id/nota', requireAuth, async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM leads WHERE id = ?', [req.params.id]);
   const lead = rows[0];
   if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
-  if (req.user.role !== 'admin' && lead.asignado_a !== req.user.id)
+  if (req.user.role === 'vendedor' && lead.asignado_a !== req.user.id)
     return res.status(403).json({ error: 'Sin permiso' });
 
   await registrarEvento(req.params.id, req.user, 'nota', texto.trim());
@@ -158,7 +258,6 @@ router.post('/upload', requireAuth, requireAdmin, (req, res, next) => {
     leads.flat()
   );
 
-  // Registro de creación para cada lead importado
   const firstId = result.insertId;
   const eventRows = leads.map((_, i) => [
     firstId + i, null, 'Sistema', 'creacion', 'Lead creado por importación masiva',
