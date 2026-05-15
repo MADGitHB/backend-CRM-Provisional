@@ -5,6 +5,7 @@ import authRoutes from './routes/auth.js';
 import leadsRoutes from './routes/leads.js';
 import usersRoutes from './routes/users.js';
 import territoriosRoutes from './routes/territorios.js';
+import statsRoutes from './routes/stats.js';
 
 dotenv.config();
 
@@ -21,5 +22,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/territorios', territoriosRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.listen(PORT, () => console.log(`CRM API corriendo en http://localhost:${PORT}`));

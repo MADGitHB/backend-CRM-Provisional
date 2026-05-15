@@ -28,6 +28,16 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+router.patch('/:id/role', requireAuth, requireAdmin, async (req, res) => {
+  const { role } = req.body;
+  const valid = ['admin', 'gerente', 'vendedor'];
+  if (!valid.includes(role)) return res.status(400).json({ error: 'Rol inválido' });
+  if (Number(req.params.id) === req.user.id)
+    return res.status(400).json({ error: 'No puedes cambiar tu propio rol' });
+  await pool.query('UPDATE users SET role = ? WHERE id = ?', [role, req.params.id]);
+  res.json({ ok: true });
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
